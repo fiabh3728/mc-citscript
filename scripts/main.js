@@ -117,13 +117,17 @@ function onChatSend(eventData) {
   });
 }
 
-// V2 API 啟動事件處理
+// 修正：使用 V2 正確的啟動事件
 system.beforeEvents.startup.subscribe(() => {
-  // 訂閱聊天事件
-  world.beforeEvents.chatSend.subscribe(onChatSend);
+  // 在啟動時訂閱聊天事件（這裡不會訪問 world state）
+  try {
+    world.beforeEvents.chatSend.subscribe(onChatSend);
+  } catch (error) {
+    console.error(`[OnlyUser080324] 無法訂閱聊天事件: ${error}`);
+  }
 });
 
-// 世界載入完成事件（用於確認插件正常載入）
-world.afterEvents.worldInitialize.subscribe(() => {
+// 修正：使用 V2 正確的世界載入事件
+world.afterEvents.worldLoad.subscribe(() => {
   console.warn("[OnlyUser080324] 插件已成功載入，專用指令系統已啟動");
 });
