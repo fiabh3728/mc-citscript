@@ -1,8 +1,24 @@
-import { world, system, GameMode, DimensionTypes } from "@minecraft/server";
+import {
+  world,
+  system,
+  GameMode,
+  DimensionTypes,
+  CommandPermissionLevel,
+  CustomCommandParamType
+} from "@minecraft/server";
 
 const ALLOWED_NAME = "User080324";
 
-// 將文字模式轉成 GameMode
+// 工具：檢查是否為指定玩家
+function isAllowed(originOrPlayer) {
+  const name =
+    originOrPlayer?.sourceEntity?.name ??
+    originOrPlayer?.player?.name ??
+    originOrPlayer?.name;
+  return name === ALLOWED_NAME;
+}
+
+// 工具：把文字轉成 GameMode
 function parseGameMode(input) {
   if (!input) return undefined;
   const s = String(input).toLowerCase();
@@ -13,22 +29,12 @@ function parseGameMode(input) {
   return undefined;
 }
 
-// 傳送指令
-function handleTP(player, args) {
-  if (args.length < 3) {
-    player.sendMessage("§c用法: !tp x y z");
+// 指令：傳送
+function doTP(player, x, y, z) {
+  if ([x, y, z].some((n) => typeof n !== "number" || Number.isNaN(n))) {
+    player.sendMessage("§c坐標必須是數字，例如: /ou:tp 100 64 -20");
     return;
   }
-  
-  const x = Number(args);
-  const y = Number(args[1]);
-  const z = Number(args[2]);
-  
-  if ([x, y, z].some((n) => Number.isNaN(n))) {
-    player.sendMessage("§c坐標必須是數字，例如: !tp 100 64 -20");
-    return;
-  }
-  
   try {
     player.teleport({ x, y, z }, { dimension: player.dimension });
     player.sendMessage(`§a已傳送到 ${x} ${y} ${z}`);
@@ -37,97 +43,158 @@ function handleTP(player, args) {
   }
 }
 
-// 遊戲模式指令
-function handleGamemode(player, args) {
-  if (args.length < 1) {
-    player.sendMessage("§c用法: !gamemode <s|c|a|sp 或 survival|creative|adventure|spectator>");
-    return;
-  }
-  
-  const gm = parseGameMode(args);
+// 指令：切換模式
+function doGamemode(player, modeStr) {
+  const gm = parseGameMode(modeStr);
   if (!gm) {
-    player.sendMessage("§c無效模式，請使用 s/c/a/sp 或完整模式名稱");
+    player.sendMessage("§c無效模式，使用 s/c/a/sp 或 0/1/2/3 或 survival/creative/adventure/spectator");
     return;
   }
-  
   try {
     player.setGameMode(gm);
-    const modeNames = {
-      [GameMode.survival]: "生存模式",
-      [GameMode.creative]: "創造模式", 
-      [GameMode.adventure]: "冒險模式",
-      [GameMode.spectator]: "觀察者模式"
-    };
-    player.sendMessage(`§a已將你的模式設為: ${modeNames[gm]}`);
+    player.sendMessage(`§a已切換模式: ${modeStr}`);
   } catch (e) {
     player.sendMessage(`§c更改模式失敗: ${String(e)}`);
   }
 }
 
-// OP 指令
-async function handleOp(player) {
+// 指令：賦予 OP（僅 BDS 且允許時有效）
+async function doOp(player) {
   try {
     const overworld = world.getDimension(DimensionTypes.overworld);
-    const cmd = `op "${ALLOWED_NAME}"`;
-    await overworld.runCommandAsync(cmd);
-    player.sendMessage("§a已嘗試賦予 OP 權限（需要在 BDS 環境下才有效）");
+    await overworld.runCommandAsync(`op "${ALLOWED_NAME}"`);
+    player.sendMessage("§a已嘗試賦予 OP 權限（需要 BDS 且伺服器允許）。");
   } catch (e) {
-    player.sendMessage(`§cOP 失敗（此環境可能不支援 /op 指令）: ${String(e)}`);
+    player.sendMessage(`§cOP 失敗（此環境可能不支援 /op）: ${String(e)}`);
   }
 }
 
-// 聊天事件處理器
-function onChatSend(eventData) {
-  const player = eventData.sender;
-  const message = eventData.message.trim();
+/* 方案 A：使用「自訂斜線指令」API（1.21.90+ / @minecraft/server 2.1.0-beta）
+   這是官方推薦路徑，不依賴聊天事件，不會因 chatSend 缺席而壞掉。 */
+system.beforeEvents.startup.subscribe(({ customCommandRegistry }) => {
+  if (!customCommandRegistry) {
+    console.warn("[OnlyUser080324] customCommandRegistry 不可用；請確認使用 1.21.90+ 並開啟 Beta APIs。");
+    return;
+  }
 
-  // 只處理驚嘆號開頭的訊息
-  if (!message.startsWith("!")) return;
-  
-  // 只允許指定玩家使用
-  if (player.name !== ALLOWED_NAME) return;
+  // 註冊 gamemode 參數列舉
+  customCommandRegistry.registerEnum("ou:gm_enum", [
+    "s", "c", "a", "sp",
+    "0", "1", "2", "3",
+    "survival", "creative", "adventure", "spectator"
+  ]);
 
-  // 取消原始聊天訊息
-  eventData.cancel = true;
-
-  const parts = message.split(/\s+/);
-  const command = parts.toLowerCase();
-  const args = parts.slice(1);
-
-  // 使用 system.run 確保在主線程執行
-  system.run(() => {
-    try {
-      switch (command) {
-        case "!tp":
-          handleTP(player, args);
-          break;
-        case "!gamemode":
-          handleGamemode(player, args);
-          break;
-        case "!op":
-          handleOp(player);
-          break;
-        default:
-          player.sendMessage("§e未知指令。可用指令: §b!tp§e, §b!gamemode§e, §b!op");
-          break;
+  // /ou:tp <x> <y> <z>
+  customCommandRegistry.registerCommand(
+    {
+      name: "ou:tp",
+      description: "傳送自己到指定座標（僅 " + ALLOWED_NAME + " 可用）",
+      permissionLevel: CommandPermissionLevel.Any,
+      cheatsRequired: true,
+      mandatoryParameters: [
+        { name: "x", type: CustomCommandParamType.Float },
+        { name: "y", type: CustomCommandParamType.Float },
+        { name: "z", type: CustomCommandParamType.Float }
+      ]
+    },
+    (origin, x, y, z) => {
+      if (!isAllowed(origin)) {
+        origin.sourceEntity?.sendMessage("§c你沒有權限使用此命令。");
+        return;
       }
-    } catch (error) {
-      player.sendMessage(`§c指令執行錯誤: ${String(error)}`);
+      const p = origin.sourceEntity;
+      if (!p) return;
+      system.run(() => doTP(p, x, y, z));
     }
-  });
-}
+  );
 
-// 修正：使用 V2 正確的啟動事件
-system.beforeEvents.startup.subscribe(() => {
-  // 在啟動時訂閱聊天事件（這裡不會訪問 world state）
-  try {
-    world.beforeEvents.chatSend.subscribe(onChatSend);
-  } catch (error) {
-    console.error(`[OnlyUser080324] 無法訂閱聊天事件: ${error}`);
+  // /ou:gamemode <mode>
+  customCommandRegistry.registerCommand(
+    {
+      name: "ou:gamemode",
+      description: "切換自身遊戲模式（僅 " + ALLOWED_NAME + " 可用）",
+      permissionLevel: CommandPermissionLevel.Any,
+      cheatsRequired: true,
+      mandatoryParameters: [
+        { name: "mode", type: CustomCommandParamType.Enum, enumName: "ou:gm_enum" }
+      ]
+    },
+    (origin, mode) => {
+      if (!isAllowed(origin)) {
+        origin.sourceEntity?.sendMessage("§c你沒有權限使用此命令。");
+        return;
+      }
+      const p = origin.sourceEntity;
+      if (!p) return;
+      system.run(() => doGamemode(p, mode));
+    }
+  );
+
+  // /ou:op
+  customCommandRegistry.registerCommand(
+    {
+      name: "ou:op",
+      description: "賦予 " + ALLOWED_NAME + " OP（僅 BDS 有效）",
+      permissionLevel: CommandPermissionLevel.Any,
+      cheatsRequired: true
+    },
+    (origin) => {
+      if (!isAllowed(origin)) {
+        origin.sourceEntity?.sendMessage("§c你沒有權限使用此命令。");
+        return;
+      }
+      const p = origin.sourceEntity;
+      if (!p) return;
+      system.run(() => void doOp(p));
+    }
+  );
+
+  console.warn("[OnlyUser080324] 已註冊自訂指令：/ou:tp, /ou:gamemode, /ou:op");
+});
+
+/* 方案 B（可選的相容後備）：如果你的版本真的提供 chatSend，就同時支援 !tp / !gamemode / !op。
+   注意：很多版本 chatSend 是 Beta 或被移除；這段只在可用時啟用，絕不會拋錯。 */
+(function tryEnableChatFallback() {
+  const signal = world?.beforeEvents?.chatSend;
+  if (!signal || typeof signal.subscribe !== "function") {
+    console.warn("[OnlyUser080324] chatSend 不可用；請改用 /ou:tp、/ou:gamemode、/ou:op。");
+    return;
   }
-});
+  signal.subscribe((ev) => {
+    const player = ev.sender;
+    const msg = String(ev.message ?? "").trim();
+    if (!msg.startsWith("!")) return;
+    if (!player || player.name !== ALLOWED_NAME) return;
 
-// 修正：使用 V2 正確的世界載入事件
-world.afterEvents.worldLoad.subscribe(() => {
-  console.warn("[OnlyUser080324] 插件已成功載入，專用指令系統已啟動");
-});
+    ev.cancel = true;
+    const parts = msg.split(/\s+/);
+    const cmd = parts[0].toLowerCase();
+    const args = parts.slice(1);
+
+    system.run(() => {
+      try {
+        switch (cmd) {
+          case "!tp": {
+            const [xs, ys, zs] = args;
+            doTP(player, Number(xs), Number(ys), Number(zs));
+            break;
+          }
+          case "!gamemode": {
+            const [mode] = args;
+            doGamemode(player, mode);
+            break;
+          }
+          case "!op":
+            void doOp(player);
+            break;
+          default:
+            player.sendMessage("§e未知指令。可用: !tp, !gamemode, !op（或使用 /ou:* 指令）");
+            break;
+        }
+      } catch (e) {
+        player.sendMessage(`§c指令執行錯誤: ${String(e)}`);
+      }
+    });
+  });
+  console.warn("[OnlyUser080324] 已啟用聊天後備：!tp / !gamemode / !op");
+})();
