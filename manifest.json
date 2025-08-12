@@ -1,0 +1,25 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "OnlyUser080324 Commands",
+    "description": "Only player 'User080324' can use !tp, !gamemode, !op",
+    "uuid": "c2d1c3b8-30c7-4d9b-b3a7-9d5f7a5a9b11",
+    "version": [1, 0, 0],
+    "min_engine_version": [1, 21, 0]
+  },
+  "modules": [
+    {
+      "type": "script",
+      "language": "javascript",
+      "uuid": "f6f43361-1a7a-4b3a-9a3a-c1bf1b3c665a",
+      "version": [1, 0, 0],
+      "entry": "scripts/main.js"
+    }
+  ],
+  "dependencies": [
+    {
+      "module_name": "@minecraft/server",
+      "version": "1.10.0"
+    }
+  ]
+}
