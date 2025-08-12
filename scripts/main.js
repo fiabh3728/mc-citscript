@@ -4,12 +4,12 @@ import {
   GameMode,
   DimensionTypes,
   CommandPermissionLevel,
-  CustomCommandParamType
+  CustomCommandParamType,
 } from "@minecraft/server";
 
 const ALLOWED_NAME = "User080324";
 
-// 工具：檢查是否為指定玩家
+// 權限檢查：只允許指定玩家名稱
 function isAllowed(originOrPlayer) {
   const name =
     originOrPlayer?.sourceEntity?.name ??
@@ -18,7 +18,7 @@ function isAllowed(originOrPlayer) {
   return name === ALLOWED_NAME;
 }
 
-// 工具：把文字轉成 GameMode
+// 將文字轉成 GameMode
 function parseGameMode(input) {
   if (!input) return undefined;
   const s = String(input).toLowerCase();
@@ -29,21 +29,23 @@ function parseGameMode(input) {
   return undefined;
 }
 
-// 指令：傳送
+// 傳送
 function doTP(player, x, y, z) {
-  if ([x, y, z].some((n) => typeof n !== "number" || Number.isNaN(n))) {
+  const nums = [x, y, z].map((n) => Number(n));
+  if (nums.some((n) => Number.isNaN(n))) {
     player.sendMessage("§c坐標必須是數字，例如: /ou:tp 100 64 -20");
     return;
   }
+  const [nx, ny, nz] = nums;
   try {
-    player.teleport({ x, y, z }, { dimension: player.dimension });
-    player.sendMessage(`§a已傳送到 ${x} ${y} ${z}`);
+    player.teleport({ x: nx, y: ny, z: nz }, { dimension: player.dimension });
+    player.sendMessage(`§a已傳送到 ${nx} ${ny} ${nz}`);
   } catch (e) {
     player.sendMessage(`§c傳送失敗: ${String(e)}`);
   }
 }
 
-// 指令：切換模式
+// 切換模式
 function doGamemode(player, modeStr) {
   const gm = parseGameMode(modeStr);
   if (!gm) {
@@ -58,7 +60,7 @@ function doGamemode(player, modeStr) {
   }
 }
 
-// 指令：賦予 OP（僅 BDS 且允許時有效）
+// 賦予 OP（僅 BDS 且允許時有效）
 async function doOp(player) {
   try {
     const overworld = world.getDimension(DimensionTypes.overworld);
@@ -69,19 +71,19 @@ async function doOp(player) {
   }
 }
 
-/* 方案 A：使用「自訂斜線指令」API（1.21.90+ / @minecraft/server 2.1.0-beta）
-   這是官方推薦路徑，不依賴聊天事件，不會因 chatSend 缺席而壞掉。 */
+/* 方案 A：自訂斜線指令（官方推薦；不依賴聊天攔截）
+   注意：CustomCommandRegistry 自 2.1.0 起可用；請在世界中開啟 Beta APIs 才會暴露。 */
 system.beforeEvents.startup.subscribe(({ customCommandRegistry }) => {
   if (!customCommandRegistry) {
-    console.warn("[OnlyUser080324] customCommandRegistry 不可用；請確認使用 1.21.90+ 並開啟 Beta APIs。");
+    console.warn("[OnlyUser080324] customCommandRegistry 不可用；請使用 1.21.90+ 並在世界啟用 Beta APIs。");
     return;
   }
 
-  // 註冊 gamemode 參數列舉
+  // 枚舉：遊戲模式
   customCommandRegistry.registerEnum("ou:gm_enum", [
     "s", "c", "a", "sp",
     "0", "1", "2", "3",
-    "survival", "creative", "adventure", "spectator"
+    "survival", "creative", "adventure", "spectator",
   ]);
 
   // /ou:tp <x> <y> <z>
@@ -94,8 +96,8 @@ system.beforeEvents.startup.subscribe(({ customCommandRegistry }) => {
       mandatoryParameters: [
         { name: "x", type: CustomCommandParamType.Float },
         { name: "y", type: CustomCommandParamType.Float },
-        { name: "z", type: CustomCommandParamType.Float }
-      ]
+        { name: "z", type: CustomCommandParamType.Float },
+      ],
     },
     (origin, x, y, z) => {
       if (!isAllowed(origin)) {
@@ -116,8 +118,8 @@ system.beforeEvents.startup.subscribe(({ customCommandRegistry }) => {
       permissionLevel: CommandPermissionLevel.Any,
       cheatsRequired: true,
       mandatoryParameters: [
-        { name: "mode", type: CustomCommandParamType.Enum, enumName: "ou:gm_enum" }
-      ]
+        { name: "mode", type: CustomCommandParamType.Enum, enumName: "ou:gm_enum" },
+      ],
     },
     (origin, mode) => {
       if (!isAllowed(origin)) {
@@ -136,7 +138,7 @@ system.beforeEvents.startup.subscribe(({ customCommandRegistry }) => {
       name: "ou:op",
       description: "賦予 " + ALLOWED_NAME + " OP（僅 BDS 有效）",
       permissionLevel: CommandPermissionLevel.Any,
-      cheatsRequired: true
+      cheatsRequired: true,
     },
     (origin) => {
       if (!isAllowed(origin)) {
@@ -152,8 +154,8 @@ system.beforeEvents.startup.subscribe(({ customCommandRegistry }) => {
   console.warn("[OnlyUser080324] 已註冊自訂指令：/ou:tp, /ou:gamemode, /ou:op");
 });
 
-/* 方案 B（可選的相容後備）：如果你的版本真的提供 chatSend，就同時支援 !tp / !gamemode / !op。
-   注意：很多版本 chatSend 是 Beta 或被移除；這段只在可用時啟用，絕不會拋錯。 */
+/* 方案 B（可選的聊天後備）：若 chatSend 存在，就支援 !tp / !gamemode / !op。
+   若環境拿不到 chatSend，此段不會啟用、也不會報錯。 */
 (function tryEnableChatFallback() {
   const signal = world?.beforeEvents?.chatSend;
   if (!signal || typeof signal.subscribe !== "function") {
@@ -176,7 +178,7 @@ system.beforeEvents.startup.subscribe(({ customCommandRegistry }) => {
         switch (cmd) {
           case "!tp": {
             const [xs, ys, zs] = args;
-            doTP(player, Number(xs), Number(ys), Number(zs));
+            doTP(player, xs, ys, zs);
             break;
           }
           case "!gamemode": {
